@@ -284,8 +284,12 @@ jobs:
           # `IOSSIMULATOR` le simulateur. Toutes les tranches sont lues, et c'est nécessaire :
           # un binaire peut être universel, et une seule tranche fautive suffit à invalider
           # le fichier.
+          #
+          # `|| true` : sous `pipefail`, un `vtool` en échec ferait sortir l'étape sans un
+          # mot, et le défaut serait attribué au projet. Le motif tolère `platform IOS`
+          # comme `platform: IOS` — la mise en forme de `vtool` n'est pas un contrat.
           PLATEFORMES_MACHO=$(xcrun vtool -show-build "$APP/$EXECUTABLE" 2>/dev/null \
-            | sed -n 's/^ *platform \([A-Za-z]*\).*/\1/p' | sort -u | tr '\n' ' ' | sed 's/ *$//')
+            | sed -n 's/^ *platform[: ]*\([A-Za-z][A-Za-z]*\).*/\1/p' | sort -u | tr '\n' ' ' | sed 's/ *$//' || true)
 
           echo "Paquet             : $NOM"
           echo "Exécutable         : $EXECUTABLE"
