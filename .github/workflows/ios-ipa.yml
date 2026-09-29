@@ -58,33 +58,33 @@ jobs:
         run: |
           set -euo pipefail
 
+          # La sortie brute est imprimée AVANT toute analyse, et c'est délibéré : la mise en
+          # forme de `swift --version` n'est pas un contrat.
+          #
+          # La première exécution de ce flux a échoué ici même, sur un exécuteur parfaitement
+          # correct. Le motif cherchait « Swift version » en début de ligne ; or les Xcode
+          # récents écrivent d'abord `swift-driver version: …`, et la version de Swift arrive
+          # plus loin sur la même ligne. Rien n'était lisible, et le contrôle a accusé le
+          # projet. Garder la sortie brute visible rend ce diagnostic immédiat.
+          echo "Xcode sélectionné : $(xcode-select -p)"
+          xcodebuild -version
+          echo "--- swift --version ---"
+          swift --version 2>&1 || xcrun swift --version 2>&1 || true
+          echo "-----------------------"
+
           MANIFESTE=node_modules/expo-modules-jsi/apple/Package.swift
 
-          if [ ! -f "$MANIFESTE" ]; then
-            echo "::error::Le manifeste $MANIFESTE est introuvable : npm ci n'a pas installé expo-modules-jsi."
-            exit 1
-          fi
+          # L'exigence se LIT dans le paquet installé : c'est l'exigence elle-même, sur la
+          # machine qui va compiler, et non un numéro majeur d'Xcode qu'on suppose équivalent.
+          EXIGENCE=$(sed -n 's|^// swift-tools-version: *\([0-9][0-9.]*\).*|\1|p' "$MANIFESTE" 2>/dev/null | head -n 1 || true)
 
-          # L'exigence se LIT dans le paquet installé. La comparer au numéro majeur d'Xcode
-          # serait un indice ; ceci est l'exigence elle-même, sur la machine qui va compiler.
-          EXIGENCE=$(sed -n 's|^// swift-tools-version: *\([0-9][0-9.]*\).*|\1|p' "$MANIFESTE" | head -n 1)
+          # `.*` en tête, et non `^` : c'est la seule correction de fond de cette étape, et
+          # elle vient d'une mesure, pas d'une relecture.
+          FOURNIE=$( (swift --version 2>&1 || xcrun swift --version 2>&1) \
+            | sed -n 's/.*[Ss]wift version \([0-9][0-9.]*\).*/\1/p' | head -n 1 || true)
 
-          if [ -z "$EXIGENCE" ]; then
-            echo "::error::$MANIFESTE ne déclare pas de « swift-tools-version » : la forme du manifeste a changé, ce contrôle doit être relu."
-            exit 1
-          fi
-
-          FOURNIE=$(swift --version 2>/dev/null | sed -n 's/^Swift version \([0-9][0-9.]*\).*/\1/p' | head -n 1)
-
-          if [ -z "$FOURNIE" ]; then
-            echo "::error::La version de Swift n'a pas pu être lue : « swift --version » n'a rien rendu d'exploitable."
-            exit 1
-          fi
-
-          echo "Xcode sélectionné : $(xcode-select -p)"
-          echo "$(xcodebuild -version | tr '\n' ' ')"
-          echo "swift-tools-version exigée : $EXIGENCE"
-          echo "Swift fourni : $FOURNIE"
+          echo "swift-tools-version exigée : ${EXIGENCE:-illisible}"
+          echo "Swift fourni               : ${FOURNIE:-illisible}"
 
           # Comparaison champ par champ, du plus significatif au moins significatif. Un
           # `[ "$A" \> "$B" ]` sur des chaînes classerait « 6.10 » avant « 6.9 ».
@@ -102,10 +102,40 @@ jobs:
             return 0
           }
 
-          if ! superieur_ou_egal "$FOURNIE" "$EXIGENCE"; then
-            echo "::error::Swift $FOURNIE est trop ancien : expo-modules-jsi exige la version d'outils $EXIGENCE, fournie à partir d'Xcode 26. Choisir un exécuteur dont Xcode est ≥ 26."
+          # Quand les deux se lisent — le cas normal — on compare l'exigence réelle.
+          if [ -n "$EXIGENCE" ] && [ -n "$FOURNIE" ]; then
+            if ! superieur_ou_egal "$FOURNIE" "$EXIGENCE"; then
+              echo "::error::Swift $FOURNIE est trop ancien : expo-modules-jsi exige la version d'outils $EXIGENCE, fournie à partir d'Xcode 26. Choisir un exécuteur dont Xcode est ≥ 26."
+              exit 1
+            fi
+            echo "Swift $FOURNIE satisfait l'exigence $EXIGENCE."
+            exit 0
+          fi
+
+          # Repli, quand une des deux lectures a échoué : comparer le majeur d'Xcode à 26.
+          #
+          # C'est le point qui compte. Un contrôle de confort ne doit pas être ce qui casse
+          # une compilation valide : ici il avertit, et c'est Xcode lui-même qui tranchera
+          # au fond du journal si l'exigence n'est pas tenue. Échouer sur une lecture
+          # impossible reviendrait à accuser le projet pour un défaut de l'outil de mesure.
+          echo "::warning::Une des deux versions n'a pas pu être lue : le contrôle se rabat sur le numéro majeur d'Xcode."
+
+          XCODE=$(xcodebuild -version 2>/dev/null | sed -n 's/^Xcode \([0-9][0-9.]*\).*/\1/p' | head -n 1 || true)
+          MAJEUR=${XCODE%%.*}
+
+          case "$MAJEUR" in
+            '' | *[!0-9]*)
+              echo "::warning::Le numéro majeur d'Xcode est illisible (« $XCODE ») : le contrôle renonce, Xcode tranchera."
+              exit 0
+              ;;
+          esac
+
+          if [ "$MAJEUR" -lt 26 ]; then
+            echo "::error::Xcode $XCODE est trop ancien : expo-modules-jsi exige Swift 6.2, fourni à partir d'Xcode 26. Choisir un exécuteur dont Xcode est ≥ 26."
             exit 1
           fi
+
+          echo "Xcode $XCODE : majeur ≥ 26, l'exigence de Swift 6.2 est vraisemblablement tenue."
 
       # Avant de compiler, et non après : un binaire qui compile n'est pas un binaire juste.
       - name: Vérifier avant de compiler
