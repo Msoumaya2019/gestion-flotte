@@ -63,10 +63,42 @@ jobs:
       - name: Générer le projet natif
         run: npx expo prebuild --platform android --clean
 
+      - name: Relever le tas de Gradle
+        # `expo prebuild` écrit un `android/gradle.properties` qui fixe
+        # `org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=512m` — valeur lue dans
+        # `node_modules/expo/template.tgz`, pas supposée. Le `mergeDexRelease` de D8 y est
+        # passé juste au-dessus : la compilation de la version 1.1.0 est morte après
+        # vingt-quatre minutes sur `java.lang.OutOfMemoryError: Java heap space`, à
+        # l'avant-dernière grosse étape, alors que celle de la 1.0.0 tenait dans ces 2 Go.
+        #
+        # Le réglage est donc posé **après** prebuild, et non avant : prebuild réécrit ce
+        # fichier, si bien qu'une modification faite plus tôt disparaîtrait sans un mot.
+        # Un `app.config.js` n'aurait pas aidé — `expo-build-properties` n'expose pas cette
+        # propriété, et l'ajouter coûterait une dépendance pour une ligne de configuration.
+        #
+        # 6 Go parce que l'exécuteur en a 16 et qu'un seul travail y tourne : la valeur
+        # exacte nécessaire n'est pas mesurée, on sait seulement que 2 Go ne suffisent pas,
+        # et une seconde panne coûterait vingt-cinq minutes de plus.
+        working-directory: android
+        run: |
+          set -euo pipefail
+          REGLAGE='org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g'
+
+          if grep -q '^org\.gradle\.jvmargs=' gradle.properties; then
+            sed -i "s|^org\.gradle\.jvmargs=.*|${REGLAGE}|" gradle.properties
+          else
+            printf '%s\n' "$REGLAGE" >> gradle.properties
+          fi
+
+          # Relire ce qui a été écrit, au lieu de croire l'écriture : une substitution qui
+          # ne mord pas laisse le fichier intact, et la compilation retombe sur 2 Go sans
+          # que rien ne le dise avant la panne.
+          grep -Fx "$REGLAGE" gradle.properties
+
       - name: Compiler l'APK de release
-        # Le seul `working-directory` du fichier, et il ne concerne que cette étape : les
-        # autres chemins partent de la racine du dépôt. Mélanger les deux conventions
-        # produirait des `android/android/…`.
+        # Les étapes qui touchent `android/` déclarent leur `working-directory` ; toutes les
+        # autres partent de la racine du dépôt. Mélanger les deux conventions produirait des
+        # `android/android/…`.
         working-directory: android
         run: ./gradlew assembleRelease --no-daemon --stacktrace
 
