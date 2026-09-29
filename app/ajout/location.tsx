@@ -34,7 +34,12 @@ import { useMemo, useState, type ReactElement } from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
-import { DOCUMENT_STATUS_LABELS, FREQUENCY_LABELS } from '@/domain/catalog';
+import {
+  DOCUMENT_STATUS_LABELS,
+  FREQUENCY_LABELS,
+  PAYMENT_TIMING_HINTS,
+  PAYMENT_TIMING_LABELS,
+} from '@/domain/catalog';
 import { formatFr, todayIso, weekdayLabelFr } from '@/domain/dates';
 import { checkRentalEligibility } from '@/domain/eligibility';
 import { formatKm, formatMoney } from '@/domain/money';
@@ -47,7 +52,9 @@ import {
 } from '@/domain/rental';
 import {
   PAYMENT_FREQUENCIES,
+  PAYMENT_TIMINGS,
   type PaymentFrequency,
+  type PaymentTiming,
   type Rental,
 } from '@/domain/types';
 import { useApp } from '@/state/app-context';
@@ -91,6 +98,7 @@ export default function RentalFormScreen(): ReactElement {
   const [intervalDays, setIntervalDays] = useState<number | null>(14);
   const [dueWeekday, setDueWeekday] = useState<number | null>(null);
   const [dueDayOfMonth, setDueDayOfMonth] = useState<number | null>(null);
+  const [paymentTiming, setPaymentTiming] = useState<PaymentTiming>('debut');
   const [depositCents, setDepositCents] = useState<number | null>(null);
   const [startMileageKm, setStartMileageKm] = useState<number | null>(
     firstVehicle?.currentMileageKm ?? null,
@@ -122,8 +130,9 @@ export default function RentalFormScreen(): ReactElement {
       dueWeekday:
         frequency === 'hebdomadaire' || frequency === 'bimensuel' ? dueWeekday : null,
       dueDayOfMonth: frequency === 'mensuel' ? dueDayOfMonth : null,
+      paymentTiming,
     }),
-    [startDate, openEnded, endDate, frequency, intervalDays, dueWeekday, dueDayOfMonth, today],
+    [startDate, openEnded, endDate, frequency, intervalDays, dueWeekday, dueDayOfMonth, paymentTiming, today],
   );
 
   /** Horizon de l'aperçu : la date de fin, ou douze mois pour une location sans terme. */
@@ -217,6 +226,7 @@ export default function RentalFormScreen(): ReactElement {
       intervalDays: draft.intervalDays,
       dueWeekday: draft.dueWeekday,
       dueDayOfMonth: draft.dueDayOfMonth,
+      paymentTiming: draft.paymentTiming,
       depositCents: depositCents ?? 0,
       startMileageKm: startMileageKm ?? vehicle?.currentMileageKm ?? 0,
       endMileageKm: null,
@@ -521,6 +531,19 @@ export default function RentalFormScreen(): ReactElement {
           suffix="jours"
         />
       ) : null}
+
+      <SelectField
+        label="Moment du paiement"
+        required
+        value={paymentTiming}
+        options={PAYMENT_TIMINGS.map((value) => ({
+          value,
+          label: PAYMENT_TIMING_LABELS[value],
+          hint: PAYMENT_TIMING_HINTS[value],
+        }))}
+        onChange={setPaymentTiming}
+        hint="« Fin de période » décale chaque échéance d’une période : une location à la semaine démarrée un lundi se règle le lundi suivant, et non le jour du départ."
+      />
 
       <SectionHeader title="Aperçu de l’échéancier" />
       <Card>

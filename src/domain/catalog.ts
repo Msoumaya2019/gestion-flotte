@@ -19,6 +19,7 @@ import type {
   NotificationKind,
   PaymentFrequency,
   PaymentStatus,
+  PaymentTiming,
   RentalStatus,
   VehicleStatus,
 } from './types';
@@ -75,6 +76,23 @@ export const FREQUENCY_LABELS: Record<PaymentFrequency, string> = {
   bimensuel: 'Toutes les 2 semaines',
   mensuel: 'Chaque mois',
   personnalisee: 'Personnalisée',
+};
+
+/**
+ * Quand le loyer est dû dans la période qu'il couvre.
+ *
+ * Les libellés disent « période » et non « semaine » ou « mois » : la fréquence est libre, et
+ * une location à la quinzaine se règle à la fin de la quinzaine. Le cas concret est rappelé
+ * dans l'aide du champ.
+ */
+export const PAYMENT_TIMING_LABELS: Record<PaymentTiming, string> = {
+  debut: 'Début de période',
+  fin: 'Fin de période',
+};
+
+export const PAYMENT_TIMING_HINTS: Record<PaymentTiming, string> = {
+  debut: 'Le loyer est dû le premier jour de la période, d’avance.',
+  fin: 'Le loyer est dû le jour où la période se referme — à terme échu.',
 };
 
 /**

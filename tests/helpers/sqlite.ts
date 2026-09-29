@@ -51,7 +51,22 @@ export interface TestDatabase {
  * refuserait à l'exécution.
  */
 export function openTestDatabase(): TestDatabase {
-  const native = new DatabaseSync(':memory:');
+  return ouvrir(':memory:');
+}
+
+/**
+ * Ouvre une base sur un **fichier**, pour les bancs qui ont besoin de deux bases distinctes.
+ *
+ * `:memory:` ne le permet pas : deux connexions ouvertes sur cette valeur désignent **la même**
+ * base. Un banc de migration qui croirait comparer une base ancienne à une base neuve
+ * comparerait une base à elle-même, et resterait vert quoi qu'il arrive.
+ */
+export function openTestDatabaseAt(chemin: string): TestDatabase {
+  return ouvrir(chemin);
+}
+
+function ouvrir(chemin: string): TestDatabase {
+  const native = new DatabaseSync(chemin);
   native.exec('PRAGMA foreign_keys = ON;');
 
   return {

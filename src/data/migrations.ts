@@ -368,8 +368,33 @@ const SCHEMA_V1: readonly string[] = [
   )`,
 ];
 
+/**
+ * Version 2 — le moment du paiement dans la période.
+ *
+ * ## Pourquoi une migration, et non une retouche de `SCHEMA_V1`
+ *
+ * `SCHEMA_V1` est un **fait historique** : il décrit la forme que portent les bases déjà
+ * installées. Y ajouter la colonne ne la donnerait qu'aux bases neuves, et laisserait les
+ * autres sans elle alors que `PRAGMA user_version` resterait à 1 — donc aucune migration ne
+ * serait jouée. Le défaut ne se verrait que sur un appareil qui a déjà servi, c'est-à-dire
+ * partout sauf sur la machine où le code est écrit.
+ *
+ * ## Une seule liste, lue par les deux chemins
+ *
+ * Une base neuve joue la version 1 puis la version 2 ; une base installée joue la version 2
+ * seule. Les deux lisent cette même liste, donc elles ne peuvent pas diverger. L'`ALTER TABLE`
+ * réussit sur une base neuve parce que `rentals` a été créée par la version 1, juste avant.
+ *
+ * `NOT NULL DEFAULT 'debut'` est ce qui rend l'ajout sûr : une location déjà enregistrée garde
+ * exactement le comportement qu'elle avait — le loyer dû le premier jour de la période.
+ */
+const AJOUTS_V2: readonly string[] = [
+  `ALTER TABLE rentals ADD COLUMN paymentTiming TEXT NOT NULL DEFAULT 'debut'`,
+];
+
 export const MIGRATIONS: readonly Migration[] = [
   { version: 1, name: 'schema-initial', statements: SCHEMA_V1 },
+  { version: 2, name: 'moment-du-paiement', statements: AJOUTS_V2 },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0);

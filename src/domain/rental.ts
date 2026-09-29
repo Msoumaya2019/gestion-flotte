@@ -22,7 +22,7 @@ import {
   isoWeekday,
   weekdayLabelFr,
 } from './dates';
-import type { Cents, IsoDate, Payment, PaymentFrequency, PaymentStatus, Rental, RentalStatus } from './types';
+import type { Cents, IsoDate, Payment, PaymentFrequency, PaymentStatus, PaymentTiming, Rental, RentalStatus } from './types';
 
 export interface ScheduleInput {
   startDate: IsoDate;
@@ -35,6 +35,11 @@ export interface ScheduleInput {
   dueWeekday: number | null;
   /** Jour du mois (1–31) pour la fréquence mensuelle. */
   dueDayOfMonth: number | null;
+  /**
+   * `debut` : le loyer est dû le premier jour de la période. `fin` : il est dû le jour où la
+   * période se referme. Absent vaut `debut`, ce qui laisse les appels existants inchangés.
+   */
+  paymentTiming?: PaymentTiming;
   /** Borne haute quand la location n'a pas de date de fin. */
   until?: IsoDate | null;
   /** Garde-fou : au-delà, on considère que la saisie est aberrante. */
@@ -80,6 +85,20 @@ export function firstDayOfMonthOnOrAfter(iso: IsoDate, day: number): IsoDate {
  * Le jour d'ancrage prime sur la date de début : une location démarrée un mercredi avec
  * une échéance « tous les lundis » voit sa première échéance le lundi suivant. Sans jour
  * d'ancrage, la première échéance tombe le jour du début.
+ *
+ * ## Le moment du paiement décale l'échéancier d'une période, il ne le raccourcit pas
+ *
+ * `paymentTiming: 'fin'` ne retire pas la première échéance : il **décale chaque date d'une
+ * période**. La raison tient au compte. Une location du 1er au 31 janvier à la mensualité
+ * engendre une période, donc un loyer dû. Payé d'avance, il tombe le 1er janvier ; à terme
+ * échu, il tombe le 1er février — soit **après** la fin de la location, et c'est exactement ce
+ * que « échu » veut dire. Retirer la date au motif qu'elle dépasse la fin ferait disparaître
+ * un loyer, et le total facturé mentirait.
+ *
+ * Chaque date reste calculée **depuis l'ancre**, jamais depuis la précédente : le décalage
+ * recalcule donc lui aussi depuis l'ancre, et ne peut pas dériver. Le faire en ajoutant une
+ * période au résultat produirait, pour une ancre au 31 janvier, la suite 31 janvier,
+ * 28 février, **28 mars** — mesuré, et c'est le défaut que ce banc a attrapé.
  */
 export function scheduleDueDates(input: ScheduleInput): IsoDate[] {
   const limit = input.endDate ?? input.until ?? addMonths(input.startDate, 12);
@@ -95,13 +114,25 @@ export function scheduleDueDates(input: ScheduleInput): IsoDate[] {
   }
 
   const max = input.maxOccurrences ?? 520;
-  const dates: IsoDate[] = [];
+  const base: IsoDate[] = [];
   for (let index = 0; index < max; index += 1) {
     const date = step !== null ? addDays(anchor, step * index) : addMonths(anchor, index);
     if (compareIso(date, limit) > 0) break;
-    dates.push(date);
+    base.push(date);
   }
-  return dates;
+
+  if (input.paymentTiming !== 'fin') return base;
+
+  // Le décalage se **recalcule depuis l'ancre**, il n'ajoute pas une période à une date déjà
+  // produite. La nuance n'est pas cosmétique : décaler le résultat donnerait, pour une ancre au
+  // 31 janvier, 31 janvier → 28 février → 28 mars — la dérive que l'en-tête de ce module
+  // interdit, et qui n'apparaîtrait que sur les mois courts.
+  //
+  // Le **nombre** de périodes, lui, est déjà fixé par la borne. Une location d'un seul mois à
+  // terme échu garde donc son loyer, daté du lendemain de la fin : c'est le sens de « échu ».
+  return base.map((_, index) =>
+    step !== null ? addDays(anchor, step * (index + 1)) : addMonths(anchor, index + 1),
+  );
 }
 
 /** Date de fin d'engagement d'une location sans terme : 12 mois après le début. */
@@ -273,6 +304,22 @@ export function vehicleStatusForRentalStatus(status: RentalStatus): 'loue' | 'di
  * pourrait annoncer un lundi que l'échéancier placerait le mardi.
  */
 export function scheduleLabel(
+  rental: Pick<
+    Rental,
+    'frequency' | 'intervalDays' | 'dueWeekday' | 'dueDayOfMonth' | 'paymentTiming'
+  >,
+): string {
+  return `${rythmeLabel(rental)}${rental.paymentTiming === 'fin' ? ', à terme échu' : ''}`;
+}
+
+/**
+ * Le rythme seul, sans le moment du paiement.
+ *
+ * Séparé parce que les deux questions sont distinctes et que les écrans les posent séparément :
+ * « tous les lundis » est le rythme, « à terme échu » est la clause de paiement. Le contrat, lui,
+ * les veut réunis — c'est `scheduleLabel` qui les assemble.
+ */
+export function rythmeLabel(
   rental: Pick<Rental, 'frequency' | 'intervalDays' | 'dueWeekday' | 'dueDayOfMonth'>,
 ): string {
   switch (rental.frequency) {

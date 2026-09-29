@@ -3,7 +3,7 @@
     "name": "Gestion de flotte",
     "slug": "gestion-flotte",
     "scheme": "gestion-flotte",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -27,11 +27,11 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "fr.gestionflotte.app",
-      "buildNumber": "2"
+      "buildNumber": "3"
     },
     "android": {
       "package": "fr.gestionflotte.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",

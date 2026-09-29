@@ -66,6 +66,25 @@ La périodicité du loyer n'est pas limitée au mois : hebdomadaire, bimensuelle
 ou personnalisée, avec génération automatique de l'échéancier à partir de la date de
 début.
 
+Le **moment du paiement** se choisit aussi, indépendamment de la fréquence :
+
+| Moment | Ce que cela donne | Cas d'usage |
+| --- | --- | --- |
+| **Début de période** (défaut) | Une location à la semaine démarrée un lundi se règle **ce lundi-là** | Le cas courant, le loyer payé d'avance |
+| **Fin de période** | La même location se règle le **lundi suivant** | Un véhicule confié à la semaine, réglé quand la semaine se referme — « à terme échu » |
+
+Le passage à « fin de période » **décale** chaque échéance d'une période, il n'en retire
+aucune. C'est délibéré, et le compte le justifie : une location du 1er au 31 janvier
+engendre une période, donc un loyer dû. Payé d'avance il tombe le 1er janvier, à terme
+échu le 1er février — **après** la fin de la location, et c'est exactement ce que « échu »
+veut dire. Écarter cette date parce qu'elle dépasse la fin ferait disparaître un loyer, et
+le total facturé mentirait.
+
+Chaque date est recalculée **depuis l'ancre**, décalage compris, jamais en ajoutant une
+période à une date déjà produite : partir d'une ancre au 31 janvier donnerait sinon 28
+février, puis 28 mars. Ce défaut a été introduit puis attrapé par le banc — voir
+`src/domain/rental.ts`.
+
 ### Paiements
 
 Statuts *À venir*, *Payé*, *Partiellement payé*, *En retard*, *Impayé*, *Annulé*.
@@ -264,7 +283,7 @@ Ils peuvent aussi être lancés séparément :
 npm run verifier:flux         # node scripts/check-workflows.mjs
 npm run verifier              # tsc --noEmit
 npm run verifier:tests        # tsc --noEmit -p tsconfig.tests.json
-npm test                      # 278 tests
+npm test                      # 293 tests
 npm run verifier:permissions  # introspection Expo, puis contrôle des permissions
 ```
 
@@ -345,24 +364,34 @@ Deux flux compilent les binaires et les attachent à une **publication GitHub** 
 | `.github/workflows/android-apk.yml` | `ubuntu-latest` | `gestion-flotte-<version>.apk` |
 | `.github/workflows/ios-ipa.yml` | `macos-26` | `gestion-flotte-<version>-non-signe.ipa` |
 
-Pour la version `1.0.0`, les deux ont abouti, et voici ce qu'ils ont produit — des tailles
-**mesurées** par les flux eux-mêmes, pas estimées :
+Deux versions ont abouti, et voici ce qu'elles ont produit — des tailles **mesurées** par les
+flux eux-mêmes, pas estimées :
 
 | Fichier | Taille | État |
 | --- | --- | --- |
 | `gestion-flotte-1.0.0.apk` | 113 703 672 octets (108 Mo) | installable directement, signé de la clé de débogage d'Expo |
 | `gestion-flotte-1.0.0-non-signe.ipa` | 14 313 125 octets (13,6 Mo), 108 entrées | compilation **appareil**, à re-signer |
+| `gestion-flotte-1.1.0.apk` | 113 729 720 octets (108 Mo) | idem, avec le retrait en un geste et la remise à zéro |
+| `gestion-flotte-1.1.0-non-signe.ipa` | 14 326 071 octets (13,7 Mo), 108 entrées | idem |
 
 Le bundle Android a été retrouvé intact dans l'APK — six témoins sur six, dans un
 `bundle-android.hbc` de 4 183 736 octets — et le binaire iOS porte `DTPlatformName = iphoneos`
-**et** `LC_BUILD_VERSION = IOS`, les deux témoins concordant.
+**et** `LC_BUILD_VERSION = IOS`, les deux témoins concordant. Sur l'IPA de la version 1.1.0, ces
+deux témoins ont été relus **sur le fichier publié**, avec `CFBundleShortVersionString = 1.1.0`
+et `CFBundleVersion = 2` : la montée de version est bien dans le binaire, et non seulement dans
+le dépôt.
 
 Ils se déclenchent de deux façons : à la main (onglet **Actions**, bouton *Run workflow*), ou
 en poussant une étiquette `v<version>` :
 
 ```bash
-git tag v1.0.0 && git push origin v1.0.0
+git tag v1.2.0 && git push origin v1.2.0
 ```
+
+Une compilation peut aussi être relancée seule, sans nouvelle étiquette, quand le code a changé
+sans que la version change : `gh workflow run android-apk.yml --ref main`. C'est le chemin qui a
+servi à valider la correction du tas de Gradle, et il **remplace** le fichier de la version
+existante — le nom porte la version, donc l'écrasement est voulu.
 
 Les deux commencent par `npm run controle` : **un binaire qui compile n'est pas un binaire
 juste**, et la porte est franchie avant que Gradle ou Xcode ne démarre. Les deux vérifient
@@ -379,6 +408,14 @@ nulle part ailleurs :
   (`DTPlatformName` dans `Info.plist`, `LC_BUILD_VERSION` dans chaque tranche Mach-O). Sans
   cela, un binaire de **simulateur** serait livré comme « à re-signer » — or il ne
   s'installera sur aucun iPhone, même signé.
+
+Un réglage de compilation s'y ajoute, et il vient d'une panne réelle. `expo prebuild` écrit un
+`android/gradle.properties` qui fixe `org.gradle.jvmargs=-Xmx2048m` ; la fusion des dex par D8
+est passée juste au-dessus pour la version 1.1.0, et la compilation Android est morte après
+vingt-quatre minutes sur `java.lang.OutOfMemoryError: Java heap space`. Le flux relève donc le
+tas **après** `prebuild` — le poser avant serait perdu, puisque `prebuild` réécrit ce fichier —
+et relit la ligne écrite : une substitution qui n'a pas mordu fait échouer l'étape en une
+seconde, au lieu de laisser la panne se reproduire vingt-quatre minutes plus tard.
 
 ### Ce qu'il faut savoir sur les deux fichiers
 
@@ -476,7 +513,7 @@ Quelques décisions qui expliquent le reste du code :
 
 ## Modèle de données
 
-23 tables, 36 index, une migration initiale.
+23 tables, 36 index, deux migrations.
 
 | Domaine | Tables |
 | --- | --- |
@@ -490,6 +527,25 @@ Quelques décisions qui expliquent le reste du code :
 Les listes de référence (types de documents, catégories de dépenses, moyens de paiement,
 types d'entretien, clauses) sont des tables : elles se modifient depuis l'application,
 elles ne sont pas figées dans le code.
+
+### Faire évoluer le schéma
+
+Le schéma a une version, portée par `PRAGMA user_version`, et **une version ne se réécrit
+jamais**. `SCHEMA_V1` décrit la forme que portent les bases déjà installées : y ajouter une
+colonne ne la donnerait qu'aux bases neuves, et laisserait les autres sans elle alors que la
+version resterait à 1 — donc aucune migration ne serait jouée. Le défaut ne se verrait que sur
+un appareil qui a déjà servi, c'est-à-dire partout sauf sur la machine où le code est écrit.
+
+Une évolution s'ajoute donc comme **une nouvelle entrée** dans `MIGRATIONS`, jamais comme une
+retouche. Une base neuve joue toutes les migrations dans l'ordre ; une base installée joue les
+manquantes. Les deux lisent la même liste, donc elles ne peuvent pas diverger.
+
+Le banc `tests/migration.test.ts` construit une base **ancienne et remplie**, la migre, et
+compare sa forme — colonnes **et leur ordre**, plus les index — à celle d'une base neuve. Le
+contrôle décisif n'est pas « les données sont encore là » : une colonne oubliée passe ce
+premier contrôle et échoue au second. Trois gardes empêchent un vert creux : la base de départ
+ne doit pas déjà porter la colonne, la table visée ne doit pas être vide, et le nombre de
+tables doit correspondre à `TABLES`.
 
 ## Export et sauvegarde
 
@@ -516,6 +572,15 @@ seul moyen d'emporter les pièces justificatives du coffre, et il est chiffré.
 
 ## Limites connues
 
+- **Le moment du paiement se choisit à la création, et ne se modifie plus ensuite.** Il n'existe
+  pas d'écran pour modifier les conditions d'une location après coup : les seules actions
+  possibles sont l'activation, la clôture et l'annulation. Changer le moment du paiement sur une
+  location en cours demanderait de **régénérer** un échéancier dont une partie est peut-être déjà
+  réglée — une opération qui touche à l'argent et qui mérite son propre écran, pas un bouton.
+- **Le libellé de l'onglet « + » a été retiré, mais son rendu n'a pas été vu.** L'option
+  `tabBarShowLabel: false` existe bien dans la version installée (vérifié dans les types du
+  paquet), et le « + » reste, avec son étiquette d'accessibilité. Reste à confirmer sur un
+  téléphone que le rond n'est pas décalé par la place libérée.
 - **Les tests ne couvrent pas la couche `app/`.** Ils portent sur les règles métier et la
   persistance. Les écrans sont vérifiés par le contrôle de types, pas par des tests de
   rendu. Les doublures de `scripts/stubs/` remplacent les modules natifs : un défaut qui
@@ -545,7 +610,7 @@ seul moyen d'emporter les pièces justificatives du coffre, et il est chiffré.
   n'entre pas en conflit avec le défilement de la liste : cela demande un téléphone. C'est le
   même pas qui reste pour les deux binaires.
 - **Les binaires existent, mais aucun n'a encore été installé sur un appareil.** Les deux flux
-  de compilation ont abouti pour la version `1.0.0` et publié leurs fichiers, chacun vérifié —
+  de compilation ont abouti pour les versions `1.0.0` et `1.1.0` et publié leurs fichiers, chacun vérifié —
   contenu du paquet, signature côté Android, plateforme côté iOS. Mais « le paquet contient
   l'application » n'est pas « l'application s'ouvre et fonctionne » : ce dernier pas demande un
   téléphone, et c'est le seul qui reste.

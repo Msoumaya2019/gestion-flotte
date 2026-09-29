@@ -91,6 +91,7 @@ function rental(vehicleId: string, status: Rental['status']): Rental {
     intervalDays: null,
     dueWeekday: 1,
     dueDayOfMonth: null,
+    paymentTiming: 'debut',
     depositCents: 60_000,
     startMileageKm: 0,
     endMileageKm: null,

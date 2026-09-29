@@ -157,6 +157,7 @@ export function createRentalRepositories(db: SqlDatabase): RentalRepositories {
       intervalDays: rental.intervalDays,
       dueWeekday: rental.dueWeekday,
       dueDayOfMonth: rental.dueDayOfMonth,
+      paymentTiming: rental.paymentTiming,
       until,
     });
 

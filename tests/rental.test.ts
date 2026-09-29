@@ -10,6 +10,7 @@ import {
   rentalKmUsage,
   rentalPaymentTotals,
   scheduleDueDates,
+  scheduleLabel,
   stepDays,
 } from '@/domain/rental';
 import type { Payment } from '@/domain/types';
@@ -64,6 +65,124 @@ test('un jour d’échéance différent du début décale la première échéanc
     dueDayOfMonth: null,
   });
   assert.deepEqual(dates, ['2026-10-12', '2026-10-19', '2026-10-26']);
+});
+
+// ---------------------------------------------------------------------------
+// Moment du paiement : d'avance, ou à terme échu
+// ---------------------------------------------------------------------------
+
+test('sans moment précisé, le loyer reste dû le premier jour', () => {
+  const commun = {
+    startDate: '2026-10-05',
+    endDate: '2026-11-02',
+    openEnded: false,
+    frequency: 'hebdomadaire' as const,
+    intervalDays: null,
+    dueWeekday: 1,
+    dueDayOfMonth: null,
+  };
+
+  // Le champ est facultatif : les appelants qui l'ignorent doivent obtenir exactement ce
+  // qu'ils obtenaient avant. C'est ce qui rend l'ajout sans risque pour l'existant.
+  assert.deepEqual(scheduleDueDates(commun), scheduleDueDates({ ...commun, paymentTiming: 'debut' }));
+});
+
+test('payer en fin de période recule la première échéance d’une semaine', () => {
+  const dates = scheduleDueDates({
+    startDate: '2026-10-05',
+    endDate: '2026-11-02',
+    openEnded: false,
+    frequency: 'hebdomadaire',
+    intervalDays: null,
+    dueWeekday: 1,
+    dueDayOfMonth: null,
+    paymentTiming: 'fin',
+  });
+
+  // La location démarre un lundi. D'avance, le premier loyer tombe ce lundi-là ; à terme échu,
+  // il tombe le lundi suivant, quand la semaine se referme.
+  assert.deepEqual(dates, ['2026-10-12', '2026-10-19', '2026-10-26', '2026-11-02', '2026-11-09']);
+});
+
+test('le décalage ne retire aucune échéance', () => {
+  const commun = {
+    startDate: '2026-10-05',
+    endDate: '2026-11-02',
+    openEnded: false,
+    frequency: 'hebdomadaire' as const,
+    intervalDays: null,
+    dueWeekday: 1,
+    dueDayOfMonth: null,
+  };
+
+  // Le compte est ce qui protège le total facturé. Une version qui bornerait les dates
+  // décalées à la date de fin perdrait la dernière échéance, et le total mentirait.
+  const avance = scheduleDueDates(commun);
+  const echu = scheduleDueDates({ ...commun, paymentTiming: 'fin' });
+  assert.equal(echu.length, avance.length);
+});
+
+test('une location d’un seul mois à terme échu facture son loyer après la fin', () => {
+  const commun = {
+    startDate: '2026-01-01',
+    endDate: '2026-01-31',
+    openEnded: false,
+    frequency: 'mensuel' as const,
+    intervalDays: null,
+    dueWeekday: null,
+    dueDayOfMonth: null,
+  };
+
+  // Le cas qui fixe le sens de la règle. Le mois de janvier est bien dû : d'avance le
+  // 1er janvier, à terme échu le 1er février — après la fin de la location, et c'est
+  // exactement ce que « échu » veut dire. Retirer cette date ferait disparaître un loyer.
+  assert.deepEqual(scheduleDueDates(commun), ['2026-01-01']);
+  assert.deepEqual(scheduleDueDates({ ...commun, paymentTiming: 'fin' }), ['2026-02-01']);
+});
+
+test('l’ancrage à un jour précis survit au décalage', () => {
+  const dates = scheduleDueDates({
+    startDate: '2026-10-07',
+    endDate: '2026-10-26',
+    openEnded: false,
+    frequency: 'hebdomadaire',
+    intervalDays: null,
+    dueWeekday: 1,
+    dueDayOfMonth: null,
+    paymentTiming: 'fin',
+  });
+
+  // Début un mercredi, ancrage au lundi : la première tombe le lundi suivant (12), et le
+  // décalage s'applique **après** l'ancrage. La dernière passe la fin, comme il se doit.
+  assert.deepEqual(dates, ['2026-10-19', '2026-10-26', '2026-11-02']);
+});
+
+test('le mensuel à terme échu ne dérive pas davantage depuis un 31', () => {
+  const dates = scheduleDueDates({
+    startDate: '2026-01-31',
+    endDate: '2026-05-31',
+    openEnded: false,
+    frequency: 'mensuel',
+    intervalDays: null,
+    dueWeekday: null,
+    dueDayOfMonth: 31,
+    paymentTiming: 'fin',
+  });
+
+  // Chaque date reste calculée depuis l'ancre, puis décalée : le décalage ne s'accumule pas.
+  assert.deepEqual(dates, ['2026-02-28', '2026-03-31', '2026-04-30', '2026-05-31', '2026-06-30']);
+});
+
+test('le libellé d’échéance ne dit « à terme échu » qu’en fin de période', () => {
+  const commun = {
+    frequency: 'hebdomadaire' as const,
+    intervalDays: null,
+    dueWeekday: 1,
+    dueDayOfMonth: null,
+  };
+
+  assert.equal(scheduleLabel({ ...commun, paymentTiming: 'debut' }), 'chaque lundi');
+  assert.equal(scheduleLabel({ ...commun, paymentTiming: 'fin' }), 'chaque lundi, à terme échu');
 });
 
 test('l’échéancier mensuel ne dérive pas depuis un 31', () => {

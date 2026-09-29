@@ -45,6 +45,17 @@ export type FuelType = (typeof FUEL_TYPES)[number];
 export const PAYMENT_FREQUENCIES = ['hebdomadaire', 'bimensuel', 'mensuel', 'personnalisee'] as const;
 export type PaymentFrequency = (typeof PAYMENT_FREQUENCIES)[number];
 
+/**
+ * Moment où le loyer est dû dans la période qu'il couvre.
+ *
+ * Un loyer n'est pas toujours payé d'avance. Le cas courant est le mois réglé le 1er, mais une
+ * location à la semaine se règle souvent le jour où la semaine se referme. La distinction est
+ * portée par la location, et non par l'échéance : c'est une clause du contrat, au même titre
+ * que la fréquence.
+ */
+export const PAYMENT_TIMINGS = ['debut', 'fin'] as const;
+export type PaymentTiming = (typeof PAYMENT_TIMINGS)[number];
+
 /** Statut **stocké** d'une échéance. Le statut affiché est recalculé : voir `effectivePaymentStatus`. */
 export const PAYMENT_STATUSES = ['a_venir', 'paye', 'partiel', 'retard', 'impaye', 'annule'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
@@ -175,6 +186,11 @@ export interface Rental extends Entity {
   dueWeekday: number | null;
   /** Jour du mois pour les fréquences mensuelles (1–31, ramené au dernier jour si trop grand). */
   dueDayOfMonth: number | null;
+  /**
+   * `debut` : le loyer est dû le premier jour de la période qu'il couvre. `fin` : il est dû le
+   * jour où cette période se referme — « à terme échu ». Voir `scheduleDueDates`.
+   */
+  paymentTiming: PaymentTiming;
   depositCents: Cents;
   startMileageKm: Km;
   endMileageKm: Km | null;

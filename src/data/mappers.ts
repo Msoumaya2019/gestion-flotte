@@ -58,6 +58,19 @@ function entityRow(entity: Entity): Record<string, SqlValue> {
   };
 }
 
+/**
+ * Le moment du paiement, tolérant à l'absence.
+ *
+ * Toutes les autres colonnes se lisent d'un `as` direct, parce que le schéma garantit leur
+ * valeur. Celle-ci est arrivée par une migration, et une sauvegarde écrite **avant** elle ne
+ * porte pas la colonne : à la restauration, `text()` rendrait `''`, et ce `''` passerait le
+ * `as` sans rien dire — une valeur hors domaine, qui ne se manifesterait qu'au calcul de
+ * l'échéancier. Absente ou inconnue, elle vaut `debut`, qui est le comportement d'avant.
+ */
+function momentPaiement(valeur: unknown): Rental['paymentTiming'] {
+  return valeur === 'fin' ? 'fin' : 'debut';
+}
+
 function entityFrom(row: Row): Entity {
   return {
     id: text(row.id),
@@ -170,6 +183,7 @@ export function rentalToRow(rental: Rental): Record<string, SqlValue> {
     intervalDays: rental.intervalDays,
     dueWeekday: rental.dueWeekday,
     dueDayOfMonth: rental.dueDayOfMonth,
+    paymentTiming: rental.paymentTiming,
     depositCents: rental.depositCents,
     startMileageKm: rental.startMileageKm,
     endMileageKm: rental.endMileageKm,
@@ -198,6 +212,7 @@ export function rentalFromRow(row: Row): Rental {
     intervalDays: nullableInt(row.intervalDays),
     dueWeekday: nullableInt(row.dueWeekday),
     dueDayOfMonth: nullableInt(row.dueDayOfMonth),
+    paymentTiming: momentPaiement(row.paymentTiming),
     depositCents: integer(row.depositCents),
     startMileageKm: integer(row.startMileageKm),
     endMileageKm: nullableInt(row.endMileageKm),

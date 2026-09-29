@@ -259,6 +259,10 @@ export function buildSeedData(ctx: SeedContext): SeedResult {
     intervalDays: null,
     dueWeekday: 1,
     dueDayOfMonth: null,
+    // La démonstration reste au paiement d'avance : c'est le cas le plus courant, et le
+    // passer à « fin » décalerait toutes les échéances du jeu d'essai, donc les soldes et les
+    // retards que les autres contrôles mesurent. L'option existe dans le formulaire.
+    paymentTiming: 'debut',
     depositCents: 60_000,
     startMileageKm: 118_000,
     endMileageKm: null,
@@ -288,6 +292,10 @@ export function buildSeedData(ctx: SeedContext): SeedResult {
     intervalDays: null,
     dueWeekday: 1,
     dueDayOfMonth: null,
+    // La démonstration reste au paiement d'avance : c'est le cas le plus courant, et le
+    // passer à « fin » décalerait toutes les échéances du jeu d'essai, donc les soldes et les
+    // retards que les autres contrôles mesurent. L'option existe dans le formulaire.
+    paymentTiming: 'debut',
     depositCents: 56_000,
     startMileageKm: 61_000,
     endMileageKm: null,
@@ -317,6 +325,7 @@ export function buildSeedData(ctx: SeedContext): SeedResult {
     intervalDays: null,
     dueWeekday: null,
     dueDayOfMonth: 1,
+    paymentTiming: 'debut',
     depositCents: 50_000,
     startMileageKm: 96_000,
     endMileageKm: 118_000,
@@ -346,6 +355,7 @@ export function buildSeedData(ctx: SeedContext): SeedResult {
     intervalDays: null,
     dueWeekday: null,
     dueDayOfMonth: 1,
+    paymentTiming: 'debut',
     depositCents: 60_000,
     startMileageKm: 118_000,
     endMileageKm: 148_200,
@@ -432,6 +442,7 @@ export function buildSeedData(ctx: SeedContext): SeedResult {
       intervalDays: plan.rental.intervalDays,
       dueWeekday: plan.rental.dueWeekday,
       dueDayOfMonth: plan.rental.dueDayOfMonth,
+      paymentTiming: plan.rental.paymentTiming,
       until: plan.until,
     });
 

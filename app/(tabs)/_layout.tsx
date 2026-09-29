@@ -79,6 +79,11 @@ export default function TabsLayout(): ReactElement {
         name="plus"
         options={{
           title: 'Ajouter',
+          // Le libellé « Ajouter » ne s'affiche pas sous le bouton : sous le rond plein, en
+          // corps 11, il se lisait mal, et le « + » dit déjà ce qu'il fait. Le titre reste —
+          // il nomme la route — et l'étiquette d'accessibilité, elle, reste explicite : ce qui
+          // disparaît est l'encre, pas l'information.
+          tabBarShowLabel: false,
           tabBarAccessibilityLabel: 'Ajouter un paiement, une dépense ou un relevé',
           tabBarIcon: () => (
             <View style={[styles.plus, { backgroundColor: colors.primary }]}>

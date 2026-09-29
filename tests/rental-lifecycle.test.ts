@@ -120,6 +120,7 @@ function rentalOf(overrides: Partial<Rental> = {}): Rental {
     intervalDays: null,
     dueWeekday: null,
     dueDayOfMonth: 5,
+    paymentTiming: 'debut',
     depositCents: 100_000,
     startMileageKm: 118_000,
     endMileageKm: null,
