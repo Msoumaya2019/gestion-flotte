@@ -303,6 +303,18 @@ Deux flux compilent les binaires et les attachent à une **publication GitHub** 
 | `.github/workflows/android-apk.yml` | `ubuntu-latest` | `gestion-flotte-<version>.apk` |
 | `.github/workflows/ios-ipa.yml` | `macos-26` | `gestion-flotte-<version>-non-signe.ipa` |
 
+Pour la version `1.0.0`, les deux ont abouti, et voici ce qu'ils ont produit — des tailles
+**mesurées** par les flux eux-mêmes, pas estimées :
+
+| Fichier | Taille | État |
+| --- | --- | --- |
+| `gestion-flotte-1.0.0.apk` | 113 703 672 octets (108 Mo) | installable directement, signé de la clé de débogage d'Expo |
+| `gestion-flotte-1.0.0-non-signe.ipa` | 14 313 125 octets (13,6 Mo), 108 entrées | compilation **appareil**, à re-signer |
+
+Le bundle Android a été retrouvé intact dans l'APK — six témoins sur six, dans un
+`bundle-android.hbc` de 4 183 736 octets — et le binaire iOS porte `DTPlatformName = iphoneos`
+**et** `LC_BUILD_VERSION = IOS`, les deux témoins concordant.
+
 Ils se déclenchent de deux façons : à la main (onglet **Actions**, bouton *Run workflow*), ou
 en poussant une étiquette `v<version>` :
 
@@ -343,17 +355,20 @@ Trois points qui font perdre du temps :
   n'installe pas les pilotes Apple Mobile Device, et Sideloadly répond
   « No devices detected ».
 
-**L'APK est un paquet universel**, donc volumineux : il embarque quatre architectures
-(`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`) alors qu'un iPhone ou un Android récent n'en
+**L'APK est un paquet universel**, et c'est ce qui explique ses 108 Mo : il embarque quatre
+architectures (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`) alors qu'un Android récent n'en
 utilise qu'une. Un APK limité à `arm64-v8a` serait environ quatre fois plus léger. Le
 réglage vit dans `android/gradle.properties`, un fichier **généré** par `expo prebuild` :
 le modifier à la main serait perdu à la compilation suivante.
 
 **L'APK est signé avec la clé de débogage publique d'Expo**, sauf si les secrets
 `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` et
-`ANDROID_KEY_PASSWORD` sont renseignés dans le dépôt. Il s'installe parfaitement dans les
-deux cas, mais une clé de débogage ne permet pas de **remplacer** une installation par une
-autre version — il faut désinstaller d'abord — et un `.aab` signé ainsi serait refusé par
+`ANDROID_KEY_PASSWORD` sont renseignés dans le dépôt. Ce n'est pas une supposition, c'est
+mesuré sur le fichier livré : `apksigner` y lit
+`CN=Android Debug, OU=Android, O=Unknown, C=US`, empreinte SHA-256
+`fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`. Il s'installe
+parfaitement, mais une clé de débogage ne permet pas de **remplacer** une installation par
+une autre version — il faut désinstaller d'abord — et un `.aab` signé ainsi serait refusé par
 Google Play. Pour une vraie clé, voir `signer-une-application-android-sans-exposer-la-cle`.
 
 ### Par EAS Build
@@ -476,10 +491,11 @@ seul moyen d'emporter les pièces justificatives du coffre, et il est chiffré.
 - **`react-native-reanimated` et `react-native-worklets` sont installés mais inutilisés.**
   `expo-router` ne les demande qu'en dépendance facultative. Les retirer demanderait de
   reconstruire l'arbre de dépendances ; le gain est nul côté fonctionnement.
-- **Aucun binaire n'a encore été installé sur un appareil.** Les deux flux de compilation
-  existent et produisent des fichiers vérifiés — contenu du paquet, signature côté Android,
-  plateforme côté iOS — mais « le paquet contient l'application » n'est pas « l'application
-  s'ouvre et fonctionne ». Ce dernier pas demande un téléphone.
+- **Les binaires existent, mais aucun n'a encore été installé sur un appareil.** Les deux flux
+  de compilation ont abouti pour la version `1.0.0` et publié leurs fichiers, chacun vérifié —
+  contenu du paquet, signature côté Android, plateforme côté iOS. Mais « le paquet contient
+  l'application » n'est pas « l'application s'ouvre et fonctionne » : ce dernier pas demande un
+  téléphone, et c'est le seul qui reste.
 - **Android n'a jamais été exécuté.** Le code est écrit pour être compatible, le paquet est
   renseigné et l'APK se compile, mais aucune exécution sur Android n'a servi de référence :
   seuls iOS et le contrôle de types l'ont été. Les différences les plus probables sont
