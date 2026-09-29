@@ -139,6 +139,48 @@ carte VTC, entretien à prévoir.
 
 Une recherche globale sur les véhicules, les locataires et les locations.
 
+### Retirer une fiche, en un geste
+
+Sur la liste des véhicules comme sur celle des locataires, un **balayage vers la gauche**
+révèle « Retirer ». Un second balayage, sur une ligne déjà archivée, révèle « Restaurer ».
+
+Ce que le geste fait n'est pas décidé par l'écran : c'est la même règle que celle des
+formulaires, écrite une seule fois dans `src/domain/suppression.ts` et éprouvée à part.
+
+| Situation | Ce qui se passe |
+| --- | --- |
+| Une location est en cours | **Refus**, avec le motif : il faut d'abord la terminer. Sinon le véhicule sorti deviendrait introuvable pendant que la location continue de le désigner. |
+| Des données s'y rattachent | **Archivage** : la fiche est masquée, son historique conservé, et la confirmation annonce le détail (« 12 échéances, 3 locations et 1 dépense »). |
+| Rien du tout | **Archivage** aussi, et la confirmation le dit. |
+
+**Rien n'est détruit par ce geste.** Les clés étrangères du schéma sont toutes en
+`ON DELETE RESTRICT` : la base refuserait d'elle-même de supprimer un véhicule que des
+échéances désignent. Le comptage sert à le dire **avant**, la contrainte le garantit
+**après** — les deux sont éprouvés.
+
+Les fiches archivées se retrouvent par la pastille « Archivés » de chaque liste, qui les
+compte et les affiche. Sans elle, le geste serait un aller sans retour.
+
+### Vider les données, ou tout remettre à zéro
+
+`Paramètres → Zone de danger`. Deux gestes distincts, parce qu'ils n'ont pas les mêmes
+conséquences :
+
+- **Vider les données** — véhicules, locataires, locations, échéances, dépenses, entretiens,
+  états des lieux, documents. Les **catalogues** (catégories de dépense, moyens de paiement,
+  types d'entretien, types de document, clauses) et les **réglages**, code compris, sont
+  conservés : l'application repart à zéro sans être à reconfigurer.
+- **Tout remettre à zéro** — la base entière, catalogues compris, les documents du coffre, et
+  les réglages. Les catalogues sont **réamorcés** dans la foulée : une application sans type
+  de document ni moyen de paiement ne serait plus utilisable.
+
+Les deux annoncent d'abord **ce qu'ils vont effacer**, chiffres à l'appui, puis exigent que
+soit écrit le mot `SUPPRIMER`. La vérification est dans le code, pas seulement dans l'aspect
+du bouton — un bouton grisé se contourne, une garde non.
+
+Le jeu de démonstration **ne revient pas** après une remise à zéro : c'est la promesse
+écrite dans `src/data/bootstrap.ts`, et elle est éprouvée.
+
 ## Ce qui ne quitte jamais l'appareil
 
 C'est la contrainte structurante du projet, et elle est tenue par construction :
@@ -222,7 +264,7 @@ Ils peuvent aussi être lancés séparément :
 npm run verifier:flux         # node scripts/check-workflows.mjs
 npm run verifier              # tsc --noEmit
 npm run verifier:tests        # tsc --noEmit -p tsconfig.tests.json
-npm test                      # 248 tests
+npm test                      # 278 tests
 npm run verifier:permissions  # introspection Expo, puis contrôle des permissions
 ```
 
@@ -423,9 +465,11 @@ Quelques décisions qui expliquent le reste du code :
   les calculs testables sans rien simuler, et c'est là que vivent toutes les règles.
 - **L'argent est un entier de centimes**, jamais un flottant. Les dates métier sont des
   chaînes `AAAA-MM-JJ`, comparables telles quelles.
-- **Rien n'est supprimé.** Les enregistrements sont archivés (`archivedAt`), et les
-  clés étrangères sont en `ON DELETE RESTRICT`. Un véhicule vendu reste dans
-  l'historique.
+- **Aucun geste courant ne détruit.** Les enregistrements sont archivés (`archivedAt`), et
+  les clés étrangères sont en `ON DELETE RESTRICT`. Un véhicule vendu reste dans
+  l'historique. Deux exceptions, et deux seulement, explicites et gardées : la **zone de
+  danger** des réglages, et la suppression des **fichiers** du coffre. Encore la base
+  refuse-t-elle d'elle-même ce qu'une clé étrangère protège.
 - **Le schéma est versionné** par `PRAGMA user_version`, avec des migrations additives.
 - **Les fichiers joints sont adressés par identifiant**, jamais par un chemin choisi par
   l'utilisateur, pour qu'un déplacement de l'application ne casse pas les liens.
@@ -488,9 +532,18 @@ seul moyen d'emporter les pièces justificatives du coffre, et il est chiffré.
   ```
 
   puis une étape `npm run lint` dans `.github/workflows/ci.yml`.
-- **`react-native-reanimated` et `react-native-worklets` sont installés mais inutilisés.**
-  `expo-router` ne les demande qu'en dépendance facultative. Les retirer demanderait de
-  reconstruire l'arbre de dépendances ; le gain est nul côté fonctionnement.
+- **`react-native-reanimated` et `react-native-worklets` sont inutilisés par le code, mais
+  présents dans le paquet.** Mesuré le 29 septembre 2026 sur un bundle de développement :
+  1 408 occurrences de `react-native-reanimated`. La cause n'est pas `expo-router` mais
+  `react-native-gesture-handler`, dont le point d'entrée réexporte ses composants fondés sur
+  Reanimated — et `app/_layout.tsx` importe `GestureHandlerRootView` depuis ce point d'entrée.
+  Les retirer demanderait de renoncer à `gesture-handler` ; le gain est un poids de bundle,
+  pas un défaut de fonctionnement.
+- **Le balayage ne se vérifie pas sans appareil.** Le paquet se construit avec le composant
+  (prouvé : `SwipeAction` et `overshootRight` sont dans les bundles Android et iOS), mais
+  qu'un doigt ouvre réellement le panneau, que le seuil soit confortable et que le geste
+  n'entre pas en conflit avec le défilement de la liste : cela demande un téléphone. C'est le
+  même pas qui reste pour les deux binaires.
 - **Les binaires existent, mais aucun n'a encore été installé sur un appareil.** Les deux flux
   de compilation ont abouti pour la version `1.0.0` et publié leurs fichiers, chacun vérifié —
   contenu du paquet, signature côté Android, plateforme côté iOS. Mais « le paquet contient

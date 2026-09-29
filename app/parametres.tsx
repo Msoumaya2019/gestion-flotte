@@ -18,6 +18,7 @@ import { useEffect, useState, type ReactElement } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 
+import type { Inventaire } from '@/data/repositories/liens';
 import { LOCK_DELAY_OPTIONS, REMINDER_PRESETS } from '@/domain/settings';
 import { useApp } from '@/state/app-context';
 import { AppText } from '@/ui/components/text';
@@ -28,10 +29,17 @@ import { Icon } from '@/ui/components/icons';
 import { spacing } from '@/ui/theme';
 import { useTheme } from '@/ui/use-theme';
 import { clearPin, pinIsSet, setPin } from '@/services/security';
+import { remettreAZero, viderLesDonnees } from '@/services/reinitialisation';
 import { deviceRandomBytes } from '@/services/device';
 
+/** Le mot qu'il faut écrire pour armer un effacement. */
+const MOT_DE_GARDE = 'SUPPRIMER';
+
+type Geste = 'vider' | 'zero';
+
 export default function SettingsScreen(): ReactElement {
-  const { data, patchSettings, repositories, vault, vaultError, refresh } = useApp();
+  const { data, db, patchSettings, repositories, vault, vaultError, refresh, now, today, newId } =
+    useApp();
   const { colors } = useTheme();
   const router = useRouter();
   const settings = data.settings;
@@ -40,6 +48,21 @@ export default function SettingsScreen(): ReactElement {
   const [pinDraft, setPinDraft] = useState('');
   const [pinMessage, setPinMessage] = useState<string | null>(null);
   const [owner, setOwner] = useState(settings.owner);
+
+  // --- zone de danger -------------------------------------------------------
+  const [inventaire, setInventaire] = useState<Inventaire | null>(null);
+  const [geste, setGeste] = useState<Geste | null>(null);
+  const [saisie, setSaisie] = useState('');
+  const [enCours, setEnCours] = useState(false);
+  const [messageEffacement, setMessageEffacement] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (repositories === null) return;
+    void repositories.liens
+      .inventaire()
+      .then(setInventaire)
+      .catch(() => setInventaire(null));
+  }, [repositories, data]);
 
   useEffect(() => {
     if (repositories === null) return;
@@ -75,6 +98,56 @@ export default function SettingsScreen(): ReactElement {
     setPinMessage('Code supprimé.');
     await patchSettings({ pinEnabled: false, biometricsEnabled: false });
   }
+
+  /**
+   * Exécute l'effacement armé.
+   *
+   * La vérification du mot de garde est ici, et pas seulement dans l'aspect du bouton : un
+   * bouton grisé se contourne, une garde dans le code non. C'est la seule barrière entre un
+   * appui distrait et une perte définitive.
+   */
+  async function effacer(): Promise<void> {
+    if (db === null || repositories === null || geste === null) return;
+    if (saisie.trim().toUpperCase() !== MOT_DE_GARDE) return;
+
+    const lequel = geste;
+    setEnCours(true);
+    setMessageEffacement(null);
+    try {
+      if (lequel === 'vider') {
+        await viderLesDonnees(db, repositories, vault);
+      } else {
+        await remettreAZero(db, repositories, vault, { newId, now: now(), today: today() });
+      }
+      await refresh();
+      setHasPin(await pinIsSet(repositories));
+      // Le profil du loueur est remis à jour par l'effet qui suit `settings.owner` : une
+      // remise à zéro recharge des réglages neufs, donc un objet neuf.
+      setGeste(null);
+      setSaisie('');
+      setMessageEffacement(
+        lequel === 'vider'
+          ? 'Les données sont effacées. Les catalogues, les réglages et le code sont conservés.'
+          : 'L’application est remise à zéro : données, documents, catalogues et réglages.',
+      );
+    } catch (caught) {
+      setMessageEffacement(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setEnCours(false);
+    }
+  }
+
+  const resumeInventaire =
+    inventaire === null
+      ? null
+      : inventaire.total === 0
+        ? 'La base est vide : il n’y a rien à effacer.'
+        : inventaire.lignes
+            .filter((ligne) => ligne.nombre > 0)
+            .map((ligne) => ligne.libelle)
+            .join(' · ');
+
+  const motCorrect = saisie.trim().toUpperCase() === MOT_DE_GARDE;
 
   return (
     <Screen>
@@ -296,6 +369,92 @@ export default function SettingsScreen(): ReactElement {
         )}
         <View style={{ height: spacing.md }} />
         <MenuRow label="Voir tous les documents" icon="folder" onPress={() => router.push('/documents')} />
+      </Card>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Zone de danger                                                      */}
+      {/* ------------------------------------------------------------------ */}
+      <SectionHeader title="Zone de danger" icon="alert-triangle" />
+      <Card style={{ marginBottom: spacing.lg }}>
+        <AppText variant="caption" color="textMuted" style={{ marginBottom: spacing.md }}>
+          Ces gestes sont définitifs : rien ne les annule. La sauvegarde chiffrée est la seule
+          façon de revenir en arrière — faites-la d’abord.
+        </AppText>
+        <MenuRow
+          label="Créer une sauvegarde"
+          icon="download"
+          onPress={() => router.push('/sauvegarde')}
+        />
+
+        <View style={{ height: spacing.md }} />
+        <AppText variant="caption" color="textFaint">
+          {resumeInventaire === null ? 'Lecture de la base…' : `Contenu actuel : ${resumeInventaire}`}
+        </AppText>
+
+        <View style={{ height: spacing.md }} />
+        <Button
+          label="Vider les données"
+          variant="danger"
+          block
+          onPress={() => {
+            setGeste(geste === 'vider' ? null : 'vider');
+            setSaisie('');
+            setMessageEffacement(null);
+          }}
+        />
+        <View style={{ height: spacing.sm }} />
+        <Button
+          label="Tout remettre à zéro"
+          variant="danger"
+          block
+          onPress={() => {
+            setGeste(geste === 'zero' ? null : 'zero');
+            setSaisie('');
+            setMessageEffacement(null);
+          }}
+        />
+
+        {geste === null ? null : (
+          <View style={{ marginTop: spacing.md }}>
+            <AppText variant="small" color="danger">
+              {geste === 'vider'
+                ? 'Véhicules, locataires, locations, échéances, dépenses, entretiens, états des lieux et documents seront supprimés. Les catalogues, les réglages et le code restent.'
+                : 'Tout sera supprimé, y compris les documents, les catalogues, les réglages et le code. L’application repartira comme à sa première ouverture.'}
+            </AppText>
+            <View style={{ height: spacing.md }} />
+            <TextField
+              label={`Écrivez ${MOT_DE_GARDE} pour confirmer`}
+              value={saisie}
+              onChange={setSaisie}
+              autoCapitalize="characters"
+              placeholder={MOT_DE_GARDE}
+            />
+            <Button
+              label={geste === 'vider' ? 'Vider définitivement' : 'Remettre à zéro'}
+              variant="danger"
+              block
+              loading={enCours}
+              disabled={!motCorrect}
+              onPress={() => void effacer()}
+            />
+            <View style={{ height: spacing.sm }} />
+            <Button
+              label="Renoncer"
+              variant="ghost"
+              block
+              onPress={() => {
+                setGeste(null);
+                setSaisie('');
+              }}
+            />
+          </View>
+        )}
+
+        {messageEffacement === null ? null : (
+          <AppText variant="caption" color="textMuted" style={{ marginTop: spacing.md }}>
+            {messageEffacement}
+          </AppText>
+        )}
       </Card>
 
       <SectionHeader title="À propos" icon="sparkles" />

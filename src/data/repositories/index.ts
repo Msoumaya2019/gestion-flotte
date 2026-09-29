@@ -12,6 +12,7 @@ import { createDocumentRepositories, type DocumentRepositories } from './documen
 import { createExpenseRepository, type ExpenseRepository } from './expenses';
 import { createFleetRepositories, type FleetRepositories } from './fleet';
 import { createInspectionRepositories, type InspectionRepositories } from './inspections';
+import { createLienRepositories, type LienRepositories } from './liens';
 import { createMaintenanceRepositories, type MaintenanceRepositories } from './maintenance';
 import { createRentalRepositories, type RentalRepositories } from './rentals';
 import { createSystemRepositories, type SystemRepositories } from './system';
@@ -24,7 +25,8 @@ export interface Repositories
     InspectionRepositories,
     DocumentRepositories,
     CatalogRepositories,
-    SystemRepositories {}
+    SystemRepositories,
+    LienRepositories {}
 
 /** Alias local : `ExpenseRepository` est une interface étendue, pas un groupe. */
 type ExpenseRepository_ = { expenses: ExpenseRepository };
@@ -39,8 +41,10 @@ export function createRepositories(db: SqlDatabase): Repositories {
     ...createDocumentRepositories(db),
     ...createCatalogRepositories(db),
     ...createSystemRepositories(db),
+    ...createLienRepositories(db),
   };
 }
 
 export type { CatalogRepositories, DocumentRepositories, ExpenseRepository, FleetRepositories };
-export type { InspectionRepositories, MaintenanceRepositories, RentalRepositories, SystemRepositories };
+export type { InspectionRepositories, LienRepositories, MaintenanceRepositories, RentalRepositories };
+export type { SystemRepositories };
