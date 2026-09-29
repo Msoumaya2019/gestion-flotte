@@ -2,7 +2,12 @@
 #
 # Le projet n'a pas de backend : il n'y a donc rien à déployer ici. Ces deux travaux
 # vérifient ce qui peut l'être sans machine Apple — les types, les tests, et la
-# configuration native. La compilation iOS se fait par EAS (voir le README), pas ici.
+# configuration native.
+#
+# La compilation des binaires a ses propres flux — `android-apk.yml` et `ios-ipa.yml` —
+# et ils ne tournent **pas** ici, volontairement : une compilation iOS consomme un quart
+# d'heure d'exécuteur macOS et ne se justifie qu'à la demande ou sur une étiquette de
+# version. Ce fichier-ci doit rester celui qui répond en une minute.
 name: Contrôle
 
 on:
@@ -25,14 +30,18 @@ jobs:
     name: Types et tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           # Node 22 est un minimum, pas un confort : le banc de test s'appuie sur
           # l'exécution directe du TypeScript et sur `node:sqlite`, tous deux intégrés
           # au runtime. Il n'y a ni transpileur ni base à installer.
-          node-version: '22'
+          #
+          # Version exacte plutôt que '22' : les deux flux de compilation l'épinglent
+          # aussi. Une mineure qui bouge entre deux exécutions fait varier ce qu'on
+          # mesure sans que rien ne le signale.
+          node-version: '22.22.2'
           cache: npm
 
       - name: Installer les dépendances
@@ -57,11 +66,11 @@ jobs:
     name: Configuration native
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: '22.22.2'
           cache: npm
 
       - name: Installer les dépendances
