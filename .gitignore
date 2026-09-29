@@ -70,3 +70,9 @@ package-lock.json.bak
 # Sortie de `expo config --type introspect`, écrite par le contrôle des permissions.
 # C'est un artefact de vérification, pas une source : il est régénéré à chaque exécution.
 config-introspectee.json
+
+# Scripts de vérification ponctuels, écrits pour une mesure et rangés là par convention
+# (`tsconfig.json` exclut déjà ce dossier). Ils portent des chemins absolus de la machine qui
+# les a produits : ils n'ont rien à faire dans un dépôt public, et rien à y laisser croire
+# qu'ils font partie du projet.
+.verif/
