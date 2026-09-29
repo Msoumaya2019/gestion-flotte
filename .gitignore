@@ -1,0 +1,72 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env
+.env.*
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android
+
+# Journalisation des installations et des vérifications locales.
+# Ces fichiers n'ont aucune valeur pour un lecteur du dépôt, et ils peuvent contenir
+# des chemins absolus de la machine qui les a produits.
+*.log
+install-*.log
+reinstall.log
+repair*.log
+verification.log
+
+# Reliquats laissés par une installation interrompue. Le contenu de ces dossiers est
+# un `node_modules` périmé : le committer ferait entrer des dizaines de milliers de
+# fichiers dans l'historique, pour rien.
+node_modules.old/
+node_modules.debris/
+node_modules.*.bak/
+
+# Sauvegardes de fichiers de dépendances, prises avant une opération risquée.
+package.json.bak
+package-lock.json.bak
+
+# Copies de travail laissées par un contrôle qui mute la source pour l'éprouver.
+.falsification-*.bak
+*.orig
+*.rej
+
+# Sortie de `expo config --type introspect`, écrite par le contrôle des permissions.
+# C'est un artefact de vérification, pas une source : il est régénéré à chaque exécution.
+config-introspectee.json

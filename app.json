@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Gestion de flotte",
+    "slug": "gestion-flotte",
+    "scheme": "gestion-flotte",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "L’application accède à vos photos uniquement pour les images que vous choisissez d’attacher à un véhicule, un dommage, un état des lieux ou un document.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Face ID protège l’accès à vos documents de location, qui restent stockés sur cet appareil."
+        }
+      ]
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "fr.gestionflotte.app",
+      "buildNumber": "1"
+    },
+    "android": {
+      "package": "fr.gestionflotte.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}

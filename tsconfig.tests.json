@@ -1,0 +1,25 @@
+{
+  "// Ce fichier existe parce que le tsconfig de l'application EXCLUT tests/ :": "sans lui, personne ne type les bancs, et une suite verte ne dit rien sur les types.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "types": ["node"],
+    // Pas de « baseUrl » : TypeScript 6 le déprécie, et depuis la 5.0 « paths » se résout
+    // tout seul par rapport à l'emplacement de ce fichier.
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["src/domain/**/*.ts", "src/data/**/*.ts", "src/services/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules"]
+}

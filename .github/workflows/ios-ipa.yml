@@ -1,0 +1,406 @@
+name: IPA iOS
+
+# Mêmes deux déclencheurs que le flux Android, et pour la même raison : l'étiquette permet
+# de refaire un binaire pour une version déjà publiée sans dépendre d'un bouton.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+# Pas d'annulation en cours, contrairement au flux de contrôle : une compilation interrompue
+# à mi-parcours ne se rattrape pas, et quinze minutes sont perdues pour rien.
+concurrency:
+  group: ipa-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    name: Compiler l'IPA
+    # `macos-26`, et non `macos-15` : ce n'est pas une préférence de fraîcheur.
+    # `expo-modules-jsi`, dépendance transitive d'Expo SDK 57, déclare
+    # « swift-tools-version: 6.2 » dans son `apple/Package.swift`, et SwiftPM refuse un
+    # paquet dont la version d'outils dépasse celle de la chaîne installée. `macos-15` a
+    # Xcode 26.3 installé mais 16.4 par défaut. L'étape « Vérifier la chaîne Swift »
+    # ci-dessous le mesure au lieu de s'en remettre au défaut de l'image, que GitHub
+    # change sans prévenir.
+    runs-on: macos-26
+    # Large : une compilation iOS non signée prend une quinzaine de minutes, et le délai
+    # n'est atteint que si quelque chose se bloque réellement.
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      # `gh` lit ce jeton pour publier la release. Sans lui, l'étape échoue après quinze
+      # minutes de compilation, sur un « 403 : Resource not accessible ».
+      GH_TOKEN: ${{ github.token }}
+      # Aucune variable `EXPO_PUBLIC_*` n'est déclarée ici, et c'est un fait mesuré, pas un
+      # oubli : l'application est entièrement hors ligne — `grep -rn EXPO_PUBLIC_` sur
+      # `app/`, `src/`, `lib/` et `scripts/` ne rend rien. Il n'y a donc rien à inliner au
+      # *bundling*, et aucune donnée ne peut manquer à l'exécution pour cette raison.
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci --no-audit --no-fund
+
+      # La chaîne d'outils d'abord, et avant même `npm run controle` : c'est le seul défaut
+      # qui ne se répare pas, et il produit au fond du journal un message qui accuse un
+      # paquet nommé « apple » — le dossier du paquet Swift, pas Apple.
+      - name: Vérifier la chaîne Swift
+        run: |
+          set -euo pipefail
+
+          MANIFESTE=node_modules/expo-modules-jsi/apple/Package.swift
+
+          if [ ! -f "$MANIFESTE" ]; then
+            echo "::error::Le manifeste $MANIFESTE est introuvable : npm ci n'a pas installé expo-modules-jsi."
+            exit 1
+          fi
+
+          # L'exigence se LIT dans le paquet installé. La comparer au numéro majeur d'Xcode
+          # serait un indice ; ceci est l'exigence elle-même, sur la machine qui va compiler.
+          EXIGENCE=$(sed -n 's|^// swift-tools-version: *\([0-9][0-9.]*\).*|\1|p' "$MANIFESTE" | head -n 1)
+
+          if [ -z "$EXIGENCE" ]; then
+            echo "::error::$MANIFESTE ne déclare pas de « swift-tools-version » : la forme du manifeste a changé, ce contrôle doit être relu."
+            exit 1
+          fi
+
+          FOURNIE=$(swift --version 2>/dev/null | sed -n 's/^Swift version \([0-9][0-9.]*\).*/\1/p' | head -n 1)
+
+          if [ -z "$FOURNIE" ]; then
+            echo "::error::La version de Swift n'a pas pu être lue : « swift --version » n'a rien rendu d'exploitable."
+            exit 1
+          fi
+
+          echo "Xcode sélectionné : $(xcode-select -p)"
+          echo "$(xcodebuild -version | tr '\n' ' ')"
+          echo "swift-tools-version exigée : $EXIGENCE"
+          echo "Swift fourni : $FOURNIE"
+
+          # Comparaison champ par champ, du plus significatif au moins significatif. Un
+          # `[ "$A" \> "$B" ]` sur des chaînes classerait « 6.10 » avant « 6.9 ».
+          superieur_ou_egal() {
+            local -a a b
+            IFS=. read -r -a a <<< "$1"
+            IFS=. read -r -a b <<< "$2"
+            local i x y
+            for i in 0 1 2; do
+              x=${a[i]:-0}
+              y=${b[i]:-0}
+              if [ "$x" -gt "$y" ]; then return 0; fi
+              if [ "$x" -lt "$y" ]; then return 1; fi
+            done
+            return 0
+          }
+
+          if ! superieur_ou_egal "$FOURNIE" "$EXIGENCE"; then
+            echo "::error::Swift $FOURNIE est trop ancien : expo-modules-jsi exige la version d'outils $EXIGENCE, fournie à partir d'Xcode 26. Choisir un exécuteur dont Xcode est ≥ 26."
+            exit 1
+          fi
+
+      # Avant de compiler, et non après : un binaire qui compile n'est pas un binaire juste.
+      - name: Vérifier avant de compiler
+        run: npm run controle
+
+      - name: Générer le projet natif
+        # `--no-install` : CocoaPods est lancé juste après, dans une étape à part. Laisser
+        # `expo prebuild` le faire en interne marche aussi, mais une panne de CocoaPods est
+        # alors noyée dans la sortie de prebuild, et rien ne distingue « le projet n'a pas
+        # été généré » de « les pods n'ont pas été installés ».
+        run: npx expo prebuild --platform ios --clean --no-install
+
+      - name: Installer les dépendances CocoaPods
+        # `working-directory: ios` — et c'est cohérent avec le reste du fichier : le
+        # repérage ci-dessous produit des chemins **relatifs à la racine** (`ios/X.xcworkspace`),
+        # et l'étape de compilation n'a **aucun** `working-directory`. Les deux moitiés de
+        # deux conventions ne se mélangent pas.
+        working-directory: ios
+        run: |
+          set -euo pipefail
+
+          if ! command -v pod > /dev/null 2>&1; then
+            echo "::error::CocoaPods est absent de l'exécuteur : le projet iOS ne peut pas être assemblé."
+            exit 1
+          fi
+
+          pod --version
+          pod install
+
+      - name: Repérer le projet et le schéma
+        id: cible
+        run: |
+          set -euo pipefail
+
+          PROJET_APP=$(find ios -maxdepth 1 -name '*.xcodeproj' | head -n 1)
+
+          if [ -z "$PROJET_APP" ]; then
+            echo "::error::Aucun projet Xcode n'a été généré par expo prebuild."
+            exit 1
+          fi
+
+          # Le schéma de l'application porte le nom de son `.xcodeproj`. On ne prend PAS
+          # `schemes[0]` : sur un espace de travail CocoaPods, `xcodebuild -list` énumère
+          # aussi les schémas des pods, et `EXConstants` arrive alphabétiquement avant. Le
+          # build réussirait alors en compilant un pod, et l'empaquetage ne trouverait
+          # aucune application.
+          SCHEME=$(basename "$PROJET_APP" .xcodeproj)
+
+          WORKSPACE=$(find ios -maxdepth 1 -name '*.xcworkspace' | head -n 1)
+
+          # Repli non décoratif : sans CocoaPods, Expo produit un projet simple, sans
+          # espace de travail.
+          if [ -n "$WORKSPACE" ]; then
+            TYPE=workspace
+            CHEMIN=$WORKSPACE
+          else
+            TYPE=project
+            CHEMIN=$PROJET_APP
+          fi
+
+          # L'extraction vit dans un script : la sortie de `xcodebuild -list -json` n'est pas
+          # toujours du JSON pur, et un `node -e "…"` multiligne à la colonne 0 terminerait
+          # le bloc scalaire `run: |` — le YAML deviendrait invalide, et GitHub répondrait
+          # « Implicit keys need to be on a single line », un message qui nomme une ligne du
+          # YAML et jamais la cause.
+          SCHEMAS=$(xcodebuild "-$TYPE" "$CHEMIN" -list -json 2>/dev/null \
+            | node scripts/lire-schemas-xcodebuild.mjs || true)
+
+          # CONFIRMATION, pas sélection : le schéma est déjà déduit du projet. Une liste
+          # illisible avertit sans échouer — un contrôle de confort qui casse une
+          # compilation valide coûte plus cher que le défaut qu'il surveille.
+          if [ -z "$SCHEMAS" ]; then
+            echo "::warning::La liste des schémas n'a pas pu être lue : la compilation continue sur le schéma déduit du projet."
+          elif ! printf '%s\n' "$SCHEMAS" | grep -Fxq "$SCHEME"; then
+            echo "::error::Le schéma « $SCHEME » est absent de la liste rendue par xcodebuild :"
+            printf '%s\n' "$SCHEMAS"
+            exit 1
+          fi
+
+          echo "type=$TYPE" >> "$GITHUB_OUTPUT"
+          echo "chemin=$CHEMIN" >> "$GITHUB_OUTPUT"
+          echo "scheme=$SCHEME" >> "$GITHUB_OUTPUT"
+
+          echo "Projet  : $PROJET_APP"
+          echo "Schéma  : $SCHEME"
+          echo "Cible   : -$TYPE $CHEMIN"
+          echo "Schémas listés : $(printf '%s' "$SCHEMAS" | tr '\n' ' ')"
+
+      - name: Compiler sans signature
+        # AUCUN `working-directory` ici : les chemins du repérage partent de la racine du
+        # dépôt, et les exécuter depuis `ios/` les préfixerait une seconde fois —
+        # `ios/ios/…` — pour un espace de travail que l'étape précédente vient de trouver.
+        #
+        # `type` et `chemin` sortent SÉPARÉMENT et le chemin est entre guillemets : le nom
+        # du projet peut contenir une espace, et une sortie interpolée sans guillemets se
+        # découperait en deux arguments. Les deux contraintes se contredisent si l'on
+        # concatène `-workspace <chemin>` dans une seule sortie.
+        #
+        # Les quatre réglages de signature sont nécessaires ENSEMBLE.
+        # `CODE_SIGNING_ALLOWED=NO` seul suffit la plupart du temps, mais Xcode retombe
+        # parfois sur une identité par défaut, et l'échec est alors un message de trousseau
+        # de clés difficile à relier à sa cause.
+        run: |
+          set -euo pipefail
+
+          xcodebuild "-${{ steps.cible.outputs.type }}" "${{ steps.cible.outputs.chemin }}" \
+            -scheme "${{ steps.cible.outputs.scheme }}" \
+            -configuration Release -sdk iphoneos -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="" \
+            build
+
+      - name: Mesurer la plateforme du binaire
+        # L'étape qui empêche la seule erreur vraiment coûteuse de ce flux : livrer un
+        # binaire de SIMULATEUR en le présentant comme « à re-signer ». Un binaire de
+        # simulateur ne s'installera sur aucun iPhone, même signé — et l'absence de
+        # `embedded.mobileprovision` ne tranche pas la question, puisqu'une compilation
+        # appareil non signée en est dépourvue elle aussi. Seuls ces deux témoins la
+        # tranchent, et ils sont indépendants l'un de l'autre : on lit les deux.
+        id: plateforme
+        run: |
+          set -euo pipefail
+
+          APP=$(find ios/build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)
+
+          if [ -z "$APP" ]; then
+            echo "::error::Aucune application n'a été produite par xcodebuild."
+            find ios/build/Build/Products -maxdepth 2 -type d 2>/dev/null || true
+            exit 1
+          fi
+
+          NOM=$(basename "$APP")
+          PLATEFORME=$(plutil -extract DTPlatformName raw -o - "$APP/Info.plist")
+          SUPPORTEES=$(plutil -extract CFBundleSupportedPlatforms json -o - "$APP/Info.plist")
+
+          # Le nom de l'exécutable ne se déduit pas du nom du paquet : `CFBundleExecutable`
+          # fait autorité.
+          EXECUTABLE=$(plutil -extract CFBundleExecutable raw -o - "$APP/Info.plist")
+
+          if [ ! -f "$APP/$EXECUTABLE" ]; then
+            echo "::error::L'exécutable « $EXECUTABLE » est absent de $NOM."
+            exit 1
+          fi
+
+          # `vtool` lit les commandes de chargement Mach-O. `platform IOS` désigne l'appareil ;
+          # `IOSSIMULATOR` le simulateur. Toutes les tranches sont lues, et c'est nécessaire :
+          # un binaire peut être universel, et une seule tranche fautive suffit à invalider
+          # le fichier.
+          PLATEFORMES_MACHO=$(xcrun vtool -show-build "$APP/$EXECUTABLE" 2>/dev/null \
+            | sed -n 's/^ *platform \([A-Za-z]*\).*/\1/p' | sort -u | tr '\n' ' ' | sed 's/ *$//')
+
+          echo "Paquet             : $NOM"
+          echo "Exécutable         : $EXECUTABLE"
+          echo "DTPlatformName     : $PLATEFORME"
+          echo "CFBundleSupported… : $SUPPORTEES"
+          echo "LC_BUILD_VERSION   : $PLATEFORMES_MACHO"
+
+          if [ "$PLATEFORME" != "iphoneos" ]; then
+            echo "::error::DTPlatformName vaut « $PLATEFORME » et non « iphoneos » : ce binaire est destiné au simulateur et ne s'installera sur aucun iPhone, même re-signé."
+            exit 1
+          fi
+
+          # Vide : `vtool` n'a rien rendu. Les deux témoins sont indépendants et l'un peut
+          # manquer selon la forme du binaire — on avertit, on n'échoue pas, puisque
+          # `DTPlatformName` a déjà tranché. Non vide et différent de `IOS` : c'est un
+          # démenti, et il arrête la livraison.
+          if [ -z "$PLATEFORMES_MACHO" ]; then
+            echo "::warning::vtool n'a pas rendu de plateforme : le témoin Mach-O manque, seul DTPlatformName a parlé."
+          elif [ "$PLATEFORMES_MACHO" != "IOS" ]; then
+            echo "::error::Les commandes de chargement Mach-O annoncent « $PLATEFORMES_MACHO » au lieu de « IOS » : compilation de simulateur."
+            exit 1
+          fi
+
+          echo "app=$APP" >> "$GITHUB_OUTPUT"
+          echo "nom=$NOM" >> "$GITHUB_OUTPUT"
+
+      - name: Empaqueter l'IPA
+        id: paquet
+        run: |
+          set -euo pipefail
+
+          VERSION=$(node -p "require('./app.json').expo.version")
+          APP="${{ steps.plateforme.outputs.app }}"
+          NOM="${{ steps.plateforme.outputs.nom }}"
+          FICHIER="gestion-flotte-${VERSION}-non-signe.ipa"
+
+          # Un IPA est une archive ZIP dont la racine porte un dossier `Payload/`. Il n'y a
+          # ni manifeste ni en-tête à produire.
+          rm -rf Payload
+          mkdir -p Payload
+          # `ditto` plutôt que `cp -R` : il préserve les liens symboliques et les attributs
+          # étendus, dont dépend l'intégrité du paquet.
+          ditto "$APP" "Payload/$NOM"
+
+          # `--keepParent` conserve le dossier `Payload` lui-même dans l'archive, ce qui est
+          # exactement la forme attendue. Pas de `--sequesterRsrc` : il ajouterait un
+          # dossier `__MACOSX` que les outils de re-signature n'attendent pas.
+          ditto -c -k --keepParent Payload "$FICHIER"
+          rm -rf Payload
+
+          TAILLE=$(stat -f %z "$FICHIER")
+
+          # La forme de l'archive est vérifiée, pas supposée. Un IPA mal formé est refusé par
+          # Sideloadly avec un message qui ne dit pas ce qui manque.
+          if ! unzip -l "$FICHIER" | grep -q "Payload/$NOM/Info.plist"; then
+            echo "::error::L'archive ne contient pas « Payload/$NOM/Info.plist » : la forme n'est pas celle d'un IPA."
+            unzip -l "$FICHIER" | head -n 20
+            exit 1
+          fi
+
+          if unzip -l "$FICHIER" | grep -q "__MACOSX"; then
+            echo "::error::L'archive contient un dossier « __MACOSX » : les outils de re-signature n'attendent pas cette entrée."
+            exit 1
+          fi
+
+          # Compté sur le préfixe `Payload/`, et non sur la ligne de résumé de `unzip -l` :
+          # cette ligne est une commodité d'affichage, pas une interface, et son format a
+          # changé selon les versions. `|| true` parce qu'un `grep` qui ne trouve rien sort
+          # en 1, ce qui ferait échouer l'étape sur un message d'erreur de shell.
+          ENTREES=$(unzip -l "$FICHIER" | grep -c "Payload/" || true)
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "fichier=$FICHIER" >> "$GITHUB_OUTPUT"
+          echo "taille=$TAILLE" >> "$GITHUB_OUTPUT"
+          echo "entrees=$ENTREES" >> "$GITHUB_OUTPUT"
+
+          echo "IPA : $FICHIER ($TAILLE octets, $ENTREES entrées)"
+
+      - name: Vérifier le contenu du paquet
+        # Le bundle de release est du bytecode Hermes. Le contrôle lit les deux encodages —
+        # une chaîne contenant un seul caractère hors ASCII y est rangée en UTF-16LE, et une
+        # recherche en UTF-8 seul conclurait à tort à une absence, qui est exactement ce que
+        # ce contrôle refuse. Il a été éprouvé sur un vrai export avant d'être branché ici.
+        run: |
+          set -euo pipefail
+
+          # `main.jsbundle` : le nom vient de `react-native-xcode.sh`, qui pose
+          # `BUNDLE_NAME="main"` quand rien ne le redéfinit, et rien dans `@expo/` ne le
+          # fait. Avec Hermes, le script réécrit le fichier sur place en bytecode, sous le
+          # même nom.
+          unzip -p "${{ steps.paquet.outputs.fichier }}" 'Payload/*.app/main.jsbundle' > main-ios.hbc
+
+          node scripts/verifier-contenu-paquet.mjs main-ios.hbc
+
+      - name: Résumer ce que le fichier permet
+        # Le résumé est la seule chose que l'utilisateur lira vraiment. Il doit dire ce que
+        # le fichier permet RÉELLEMENT — pas « il suffira de le signer » à quelqu'un qui
+        # n'a pas de compte développeur.
+        run: |
+          set -euo pipefail
+          {
+            echo "## IPA iOS — version ${{ steps.paquet.outputs.version }}"
+            echo
+            echo "- Fichier : \`${{ steps.paquet.outputs.fichier }}\`"
+            echo "- Taille : ${{ steps.paquet.outputs.taille }} octets (${{ steps.paquet.outputs.entrees }} entrées)"
+            echo "- Plateforme mesurée : \`DTPlatformName = iphoneos\`, Mach-O \`LC_BUILD_VERSION = IOS\` — compilation **pour appareil**, la seule qui puisse s'installer sur un iPhone."
+            echo "- Signature : **aucune**. C'est un produit intermédiaire, pas un fichier installable tel quel."
+            echo
+            echo "### Pour l'installer"
+            echo
+            echo "1. Re-signer sur un Mac (Sideloadly, AltStore) ou sur iPhone (eSign)."
+            echo "2. **Mode développeur obligatoire** (iOS 16+) : Réglages → Confidentialité et sécurité → Mode développeur, puis redémarrer. Sans lui, l'installation échoue."
+            echo "3. **Mot de passe principal** de l'identifiant Apple, pas un mot de passe d'application : celui-ci est refusé avec un compte gratuit."
+            echo "4. Sous Windows, iTunes doit venir du **site d'Apple** — la version du Microsoft Store n'installe pas les pilotes Apple Mobile Device, et Sideloadly répond « No devices detected »."
+            echo "5. Sur l'iPhone : Réglages → Général → VPN et gestion de l'appareil → l'identifiant Apple → **Faire confiance**."
+            echo
+            echo "### Limites d'un compte Apple gratuit"
+            echo
+            echo "- 7 jours de validité, 3 applications simultanées, 10 identifiants par tranche de 7 jours."
+            echo "- La capacité **Push Notifications n'existe pas** dans un profil gratuit. Cette application n'envoie que des notifications **locales**, qui ne passent pas par le service de push : la limite ne la prive donc de rien. Le plugin \`expo-notifications\` inscrit malgré tout \`aps-environment\`, et un outil de signature peut le retirer sans conséquence ici."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publier la version
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.paquet.outputs.version }}"
+          TAG="v${VERSION}"
+
+          # Les deux flux de compilation se déclenchent sur la même étiquette et tournent en
+          # parallèle : ils peuvent donc atteindre cette ligne en même temps. La création est
+          # donc tolérante, et c'est l'envoi qui fait foi — il échoue franchement si la
+          # version n'existe finalement pas.
+          gh release view "$TAG" > /dev/null 2>&1 \
+            || gh release create "$TAG" \
+                 --title "Gestion de flotte $VERSION" \
+                 --notes "Binaires de la version $VERSION : un APK Android installable directement, et un IPA iOS **non signé** à re-signer (Sideloadly, AltStore, eSign). Le résumé de chaque exécution porte la taille, le signataire et les conditions d'installation." \
+            || true
+
+          # `--clobber` : une seconde compilation de la même version remplace l'ancien
+          # fichier au lieu d'échouer. Le nom porte la version, donc l'écrasement est voulu.
+          gh release upload "$TAG" "${{ steps.paquet.outputs.fichier }}" --clobber
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ipa-ios
+          path: ${{ steps.paquet.outputs.fichier }}
+          if-no-files-found: error
+          retention-days: 30

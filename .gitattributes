@@ -1,0 +1,30 @@
+# Normalisation des fins de ligne, posée avant le premier commit.
+#
+# Sans ce fichier, une machine Windows où `core.autocrlf=true` extrait les fichiers en CRLF
+# alors que les outils du projet écrivent en LF. Tout contrôle qui compare des octets — un
+# `git diff --exit-code` sur un fichier régénéré, par exemple — devient alors rouge sur un
+# contenu parfaitement correct, avec un message qui ne parle ni de fin de ligne, ni de
+# plateforme, ni du fichier en cause.
+#
+# `eol=lf` l'emporte sur `core.autocrlf` pour les chemins concernés. Les scripts de ce dépôt
+# sont lus par `bash` (GitHub Actions, Git Bash) : ils doivent rester en LF, sans quoi le
+# shebang et les fins de ligne peuvent faire échouer leur exécution.
+* text=auto eol=lf
+
+# Les binaires ne sont ni convertis ni « réparés » : Git ne doit pas les toucher.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.keystore binary
+*.jks binary
+*.ipa binary
+*.apk binary
+*.aab binary
+
+# Les fichiers produits par les outils ont leurs propres conventions, et les normaliser
+# créerait du bruit à chaque exécution.
+package-lock.json -diff linguist-generated

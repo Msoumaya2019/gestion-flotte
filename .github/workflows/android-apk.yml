@@ -1,0 +1,161 @@
+name: APK Android
+
+# Deux déclencheurs, et le second n'est pas décoratif : une compilation par étiquette
+# permet de refaire un binaire pour une version déjà publiée, sans dépendre du fait que
+# quelqu'un se souvienne du bouton.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+# Une compilation ne se réutilise pas : deux exécutions menées de front produiraient deux
+# fichiers au même nom, et la seconde écraserait la première dans la release.
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    name: Compiler l'APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # `contents: write` est nécessaire pour attacher le fichier à une release, et il est
+    # déclaré **ici** : un `permissions` de travail remplace celui de la racine, il ne s'y
+    # ajoute pas. Le laisser à la racine ne suffirait donc pas à l'accorder.
+    permissions:
+      contents: write
+    env:
+      # `gh` lit ce jeton pour publier la release. Sans lui, l'étape échoue à la toute fin,
+      # après vingt minutes de compilation, sur un « 403 : Resource not accessible ».
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22.22.2'
+          cache: npm
+
+      # Gradle 9 exige Java 17 au minimum. 21 est le choix sûr.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # `@v4`, et non `@v3` : la v3 tente d'installer le paquet `tools`, retiré du dépôt
+      # Android, et échoue systématiquement. La liste explicite est obligatoire — `tools`
+      # figure encore dans les valeurs par défaut de la v4.
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Installer les dépendances
+        run: npm ci --no-audit --no-fund
+
+      # Avant de compiler, et non après : un binaire qui compile n'est pas un binaire juste.
+      # Cette porte couvre les types, les tests, la forme des flux et les permissions.
+      - name: Vérifier avant de compiler
+        run: npm run controle
+
+      - name: Générer le projet natif
+        run: npx expo prebuild --platform android --clean
+
+      - name: Compiler l'APK de release
+        # Le seul `working-directory` du fichier, et il ne concerne que cette étape : les
+        # autres chemins partent de la racine du dépôt. Mélanger les deux conventions
+        # produirait des `android/android/…`.
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Nommer le fichier et mesurer
+        id: paquet
+        run: |
+          set -euo pipefail
+          VERSION=$(node -p "require('./app.json').expo.version")
+          APK=$(find android/app/build/outputs/apk/release -name '*.apk' | head -n 1)
+
+          if [ -z "$APK" ]; then
+            echo "::error::Aucun APK produit par Gradle."
+            exit 1
+          fi
+
+          FICHIER="gestion-flotte-${VERSION}.apk"
+          cp "$APK" "$FICHIER"
+          TAILLE=$(stat -c %s "$FICHIER")
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "fichier=$FICHIER" >> "$GITHUB_OUTPUT"
+          echo "taille=$TAILLE" >> "$GITHUB_OUTPUT"
+          echo "APK : $FICHIER ($TAILLE octets)"
+
+      - name: Vérifier le contenu du paquet
+        # Le bundle de release est du bytecode Hermes. Le contrôle lit les deux encodages,
+        # et il a été éprouvé sur un vrai export avant d'être branché ici.
+        run: |
+          set -euo pipefail
+          unzip -p "${{ steps.paquet.outputs.fichier }}" assets/index.android.bundle > bundle-android.hbc
+          node scripts/verifier-contenu-paquet.mjs bundle-android.hbc
+
+      - name: Vérifier la signature
+        # Un APK non signé ne s'installe pas : Android le refuse, sans que rien ne le dise
+        # au moment de la compilation. C'est la seule étape qui prouve que le fichier remis
+        # est installable — et elle dit avec quelle clé il l'a été.
+        run: |
+          set -euo pipefail
+          APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -name apksigner -type f 2>/dev/null | sort -V | tail -n 1)
+
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::apksigner est introuvable : la signature n'a pas pu être vérifiée."
+            exit 1
+          fi
+
+          CERTIFICATS=$("$APKSIGNER" verify --print-certs "${{ steps.paquet.outputs.fichier }}")
+
+          if printf '%s' "$CERTIFICATS" | grep -q "CN=Android Debug"; then
+            SIGNATAIRE="la clé de débogage d'Expo"
+          else
+            SIGNATAIRE="une clé de release"
+          fi
+
+          {
+            echo "## APK Android — version ${{ steps.paquet.outputs.version }}"
+            echo
+            echo "- Fichier : \`${{ steps.paquet.outputs.fichier }}\`"
+            echo "- Taille : ${{ steps.paquet.outputs.taille }} octets (toutes architectures)"
+            echo "- Signé avec : **$SIGNATAIRE**"
+            echo
+            echo "L'APK s'installe directement sur un téléphone Android : il n'y a ni compte"
+            echo "développeur ni re-signature à prévoir, contrairement à l'IPA."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          printf '%s\n' "$CERTIFICATS"
+
+      - name: Publier la version
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.paquet.outputs.version }}"
+          TAG="v${VERSION}"
+
+          # Les deux flux de compilation se déclenchent sur la même étiquette et tournent en
+          # parallèle : ils peuvent donc atteindre cette ligne en même temps. La création est
+          # donc tolérante, et c'est l'envoi qui fait foi — il échoue franchement si la
+          # version n'existe finalement pas.
+          gh release view "$TAG" > /dev/null 2>&1 \
+            || gh release create "$TAG" \
+                 --title "Gestion de flotte $VERSION" \
+                 --notes "Binaires de la version $VERSION : un APK Android installable directement, et un IPA iOS **non signé** à re-signer (Sideloadly, AltStore, eSign). Le résumé de chaque exécution porte la taille, le signataire et les conditions d'installation." \
+            || true
+
+          # `--clobber` : une seconde compilation de la même version remplace l'ancien
+          # fichier au lieu d'échouer. Le nom porte la version, donc l'écrasement est voulu.
+          gh release upload "$TAG" "${{ steps.paquet.outputs.fichier }}" --clobber
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: apk-android
+          path: ${{ steps.paquet.outputs.fichier }}
+          if-no-files-found: error
+          retention-days: 30

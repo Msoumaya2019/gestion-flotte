@@ -1,0 +1,83 @@
+# Contrôle continu.
+#
+# Le projet n'a pas de backend : il n'y a donc rien à déployer ici. Ces deux travaux
+# vérifient ce qui peut l'être sans machine Apple — les types, les tests, et la
+# configuration native. La compilation iOS se fait par EAS (voir le README), pas ici.
+name: Contrôle
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Un push qui en suit un autre annule l'exécution précédente : sur une branche en cours
+# de travail, seule la dernière version mérite d'être vérifiée.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  controle:
+    name: Types et tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 22 est un minimum, pas un confort : le banc de test s'appuie sur
+          # l'exécution directe du TypeScript et sur `node:sqlite`, tous deux intégrés
+          # au runtime. Il n'y a ni transpileur ni base à installer.
+          node-version: '22'
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci --no-audit --no-fund
+
+      # En premier, et volontairement : ce contrôle coûte deux secondes, là où les étapes
+      # qui suivent installent puis compilent. Un `run:` mal formé ne se voit qu'à
+      # l'exécution, et il serait découvert après l'installation complète.
+      - name: Contrôle des flux de travail
+        run: npm run verifier:flux
+
+      - name: TypeScript — application
+        run: npm run verifier
+
+      - name: TypeScript — bancs de test
+        run: npm run verifier:tests
+
+      - name: Tests
+        run: npm test
+
+  configuration:
+    name: Configuration native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Installer les dépendances
+        run: npm ci --no-audit --no-fund
+
+      # `--type introspect` est le seul mode qui **exécute** les greffons de `app.json`.
+      # Un greffon mal configuré ne se voit qu'ici : `expo config` seul se contente de
+      # recopier le fichier, et la compilation ne le dirait qu'au moment du build.
+      - name: Introspection de la configuration
+        run: npx expo config --type introspect --json > config-introspectee.json
+
+      # Ce contrôle lit les **listes** de la configuration, il ne cherche pas des chaînes.
+      # C'est la différence qui compte, et elle a été mesurée : la chaîne
+      # `android.permission.CAMERA` est bel et bien présente dans la sortie, dans une
+      # entrée qui la **retire** du manifeste (`"tools:node": "remove"`). Un `grep` sans
+      # contexte accuse donc une configuration correcte. Le script, lui, distingue
+      # « déclarée » de « retirée » — et son banc rejoue ce défaut d'origine.
+      - name: Vérifier les permissions déclarées
+        run: node scripts/verifier-permissions.mjs config-introspectee.json
